@@ -24,6 +24,23 @@ describe "Resque::Worker" do
     Resque::Job.create(:jobs, SomeJob, 20, '/tmp')
   end
 
+  it 'worker is paused' do
+    Resque.redis.set('pause-all-workers', 'true')
+    assert_equal true, @worker.paused?
+    Resque.redis.set('pause-all-workers', 'TRUE')
+    assert_equal true, @worker.paused?
+    Resque.redis.set('pause-all-workers', 'True')
+    assert_equal true, @worker.paused?
+  end
+
+  it 'worker is not paused' do
+    assert_equal false, @worker.paused?
+    Resque.redis.set('pause-all-workers', 'false')
+    assert_equal false, @worker.paused?
+    Resque.redis.del('pause-all-workers')
+    assert_equal false, @worker.paused?
+  end
+
   it "can fail jobs" do
     Resque::Job.create(:jobs, BadJob)
     @worker.work(0)
@@ -76,7 +93,7 @@ describe "Resque::Worker" do
       assert_equal "at_exit", File.open(tmpfile).read.strip
     else
       # ensure we actually fork
-      Resque.redis.reconnect
+      Resque.redis.disconnect!
       Resque::Job.create(:at_exit_jobs, AtExitJob, tmpfile)
       worker = Resque::Worker.new(:at_exit_jobs)
       worker.run_at_exit_hooks = true
@@ -104,7 +121,7 @@ describe "Resque::Worker" do
       Process.waitpid(worker_pid)
     else
       # ensure we actually fork
-      Resque.redis.reconnect
+      Resque.redis.disconnect!
       Resque::Job.create(:not_failing_job, RaiseExceptionOnFailure)
       worker = Resque::Worker.new(:not_failing_job)
       worker.run_at_exit_hooks = true
@@ -124,7 +141,7 @@ describe "Resque::Worker" do
       assert !File.exist?(tmpfile), "The file '#{tmpfile}' exists, at_exit hooks were run"
     else
       # ensure we actually fork
-      Resque.redis.reconnect
+      Resque.redis.disconnect!
       Resque::Job.create(:at_exit_jobs, AtExitJob, tmpfile)
       worker = Resque::Worker.new(:at_exit_jobs)
       suppress_warnings do
@@ -272,7 +289,7 @@ describe "Resque::Worker" do
   it "supports setting the procline to have arbitrary prefixes and suffixes" do
     prefix = 'WORKER-TEST-PREFIX/'
     suffix = 'worker-test-suffix'
-    ver = Resque::Version
+    ver = Resque::VERSION
 
     old_prefix = ENV['RESQUE_PROCLINE_PREFIX']
     ENV.delete('RESQUE_PROCLINE_PREFIX')
@@ -412,6 +429,49 @@ describe "Resque::Worker" do
     assert_equal 1, Resque.size(:critical)
     assert_equal 0, Resque.size(:test_one)
     assert_equal 0, Resque.size(:test_two)
+  end
+
+  it "excludes a negated queue" do
+    Resque::Job.create(:critical, GoodJob)
+    Resque::Job.create(:high, GoodJob)
+    Resque::Job.create(:low, GoodJob)
+
+    @worker = Resque::Worker.new(:critical, "!low", "*")
+    @worker.work(0)
+
+    assert_equal 0, Resque.size(:critical)
+    assert_equal 0, Resque.size(:high)
+    assert_equal 1, Resque.size(:low)
+  end
+
+  it "excludes multiple negated queues" do
+    Resque::Job.create(:critical, GoodJob)
+    Resque::Job.create(:high, GoodJob)
+    Resque::Job.create(:foo, GoodJob)
+    Resque::Job.create(:bar, GoodJob)
+
+    @worker = Resque::Worker.new("*", "!foo", "!bar")
+    @worker.work(0)
+
+    assert_equal 0, Resque.size(:critical)
+    assert_equal 0, Resque.size(:high)
+    assert_equal 1, Resque.size(:foo)
+    assert_equal 1, Resque.size(:bar)
+  end
+
+  it "works with negated globs" do
+    Resque::Job.create(:critical, GoodJob)
+    Resque::Job.create(:high, GoodJob)
+    Resque::Job.create(:test_one, GoodJob)
+    Resque::Job.create(:test_two, GoodJob)
+
+    @worker = Resque::Worker.new("*", "!test_*")
+    @worker.work(0)
+
+    assert_equal 0, Resque.size(:critical)
+    assert_equal 0, Resque.size(:high)
+    assert_equal 1, Resque.size(:test_one)
+    assert_equal 1, Resque.size(:test_two)
   end
 
   it "has a unique id" do
@@ -578,7 +638,7 @@ describe "Resque::Worker" do
     without_forking do
       @worker.extend(AssertInWorkBlock).work(0) do
         prefix = ENV['RESQUE_PROCLINE_PREFIX']
-        ver = Resque::Version
+        ver = Resque::VERSION
         assert_equal "#{prefix}resque-#{ver}: Processing jobs since #{Time.now.to_i} [SomeJob]", $0
       end
     end
@@ -1137,6 +1197,7 @@ describe "Resque::Worker" do
       Resque::Job.create(:jobs, SomeJob, 20, '/tmp')
       workerA.work(0)
 
+      pipe_rd.wait_readable(1)
       assert_equal('hey', pipe_rd.read_nonblock(3))
     ensure
       pipe_rd.close
@@ -1204,12 +1265,11 @@ describe "Resque::Worker" do
     assert_equal 1, Resque::Failure.count
   end
 
-  it "no reconnects to redis when not forking" do
-    original_connection = Resque.redis._client.connection.instance_variable_get("@sock")
+  it "no disconnect from redis when not forking" do
     without_forking do
+      assert_equal Resque.redis.ping, "PONG"
       @worker.work(0)
     end
-    assert_equal original_connection, Resque.redis._client.connection.instance_variable_get("@sock")
   end
 
   it "logs errors with the correct logging level" do
@@ -1281,13 +1341,11 @@ describe "Resque::Worker" do
       ForkResultJob.perform_with_result(@worker, &block)
     end
 
-    it "reconnects to redis after fork" do
-      original_connection = Resque.redis._client.connection.instance_variable_get("@sock").object_id
-      new_connection = run_in_job do
-        Resque.redis._client.connection.instance_variable_get("@sock").object_id
+    it "redis still works after forking" do
+      run_in_job do
+        assert_equal Resque.redis.ping, "PONG"
       end
-      assert Resque.redis._client.connected?
-      refute_equal original_connection, new_connection
+      assert_equal Resque.redis.ping, "PONG"
     end
 
     it "tries to reconnect three times before giving up and the failure does not unregister the parent" do
@@ -1321,7 +1379,7 @@ describe "Resque::Worker" do
         @queue = :long_running_job
 
         def self.perform(run_time)
-          Resque.redis.reconnect # get its own connection
+          Resque.redis.disconnect! # get its own connection
           Resque.redis.rpush('pre-term-timeout-test:start', Process.pid)
           sleep run_time
           Resque.redis.rpush('pre-term-timeout-test:result', 'Finished Normally')
@@ -1343,7 +1401,7 @@ describe "Resque::Worker" do
 
             worker_pid = Kernel.fork do
               # reconnect to redis
-              Resque.redis.reconnect
+              Resque.redis.disconnect!
 
               worker = Resque::Worker.new(:long_running_job)
               worker.pre_shutdown_timeout = pre_shutdown_timeout
@@ -1355,7 +1413,7 @@ describe "Resque::Worker" do
             end
 
             # ensure the worker is started
-            start_status = Resque.redis.blpop('pre-term-timeout-test:start', 5)
+            start_status = Resque.redis.blpop('pre-term-timeout-test:start', timeout: 5)
             refute start_status == nil
             child_pid = start_status[1].to_i
             assert_operator child_pid, :>, 0
@@ -1365,7 +1423,7 @@ describe "Resque::Worker" do
             Process.waitpid(worker_pid)
 
             # wait to see how it all came down
-            result = Resque.redis.blpop('pre-term-timeout-test:result', 5)
+            result = Resque.redis.blpop('pre-term-timeout-test:result', timeout: 5)
             refute result == nil
 
             if run_time >= pre_shutdown_timeout
@@ -1413,4 +1471,5 @@ describe "Resque::Worker" do
       assert_kind_of Process::Status, exception.process_status
     end
   end
+
 end

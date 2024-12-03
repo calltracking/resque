@@ -16,7 +16,7 @@ namespace :resque do
     end
 
     worker.prepare
-    worker.log "Starting worker #{self}"
+    worker.log "Starting worker #{worker}"
     worker.work(ENV['INTERVAL'] || 5) # interval, will block
   end
 
@@ -39,7 +39,7 @@ namespace :resque do
 
   # Preload app files if this is Rails
   task :preload => :setup do
-    if defined?(Rails)
+    if defined?(Rails) && Rails.respond_to?(:application)
       if Rails.application.config.eager_load
         ActiveSupport.run_load_hooks(:before_eager_load, Rails.application)
         Rails.application.config.eager_load_namespaces.each(&:eager_load!)
