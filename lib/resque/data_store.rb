@@ -79,7 +79,9 @@ module Resque
     # Force a reconnect to Redis without closing the connection in the parent
     # process after a fork.
     def reconnect
-      @redis._client.connect
+      @redis.disconnect!
+      @redis.ping
+      nil
     end
 
     # Returns an array of all known Resque keys in Redis. Redis' KEYS operation
@@ -100,9 +102,9 @@ module Resque
         @redis = redis
       end
       def push_to_queue(queue,encoded_item)
-        @redis.pipelined do
-          watch_queue(queue)
-          @redis.rpush redis_key_for_queue(queue), encoded_item
+        @redis.pipelined do |piped|
+          watch_queue(queue, redis: piped)
+          piped.rpush redis_key_for_queue(queue), encoded_item
         end
       end
 
@@ -129,9 +131,9 @@ module Resque
       end
 
       def remove_queue(queue)
-        @redis.pipelined do
-          @redis.srem(:queues, queue.to_s)
-          @redis.del(redis_key_for_queue(queue))
+        @redis.pipelined do |piped|
+          piped.srem(:queues, [queue.to_s])
+          piped.unlink(redis_key_for_queue(queue))
         end
       end
 
@@ -145,8 +147,8 @@ module Resque
       end
 
       # Private: do not call
-      def watch_queue(queue)
-        @redis.sadd(:queues, queue.to_s)
+      def watch_queue(queue, redis: @redis)
+        redis.sadd(:queues, [queue.to_s])
       end
 
       # Private: do not call
@@ -172,11 +174,11 @@ module Resque
       end
 
       def add_failed_queue(failed_queue_name)
-        @redis.sadd(:failed_queues, failed_queue_name)
+        @redis.sadd(:failed_queues, [failed_queue_name])
       end
 
       def remove_failed_queue(failed_queue_name=:failed)
-        @redis.del(failed_queue_name)
+        @redis.unlink(failed_queue_name)
       end
 
       def num_failed(failed_queue_name=:failed)
@@ -196,7 +198,7 @@ module Resque
       end
 
       def clear_failed_queue(failed_queue_name=:failed)
-        @redis.del(failed_queue_name)
+        @redis.unlink(failed_queue_name)
       end
 
       def update_item_in_failed_queue(index_in_failed_queue,new_item_data,failed_queue_name=:failed)
@@ -237,24 +239,24 @@ module Resque
       end
 
       def register_worker(worker)
-        @redis.pipelined do
-          @redis.sadd(:workers, worker)
-          worker_started(worker)
+        @redis.pipelined do |piped|
+          piped.sadd(:workers, [worker.id])
+          worker_started(worker, redis: piped)
         end
       end
 
-      def worker_started(worker)
-        @redis.set(redis_key_for_worker_start_time(worker), Time.now.to_s)
+      def worker_started(worker, redis: @redis)
+        redis.set(redis_key_for_worker_start_time(worker), Time.now.to_s)
       end
 
       def unregister_worker(worker, &block)
-        @redis.pipelined do
-          @redis.srem(:workers, worker)
-          @redis.del(redis_key_for_worker(worker))
-          @redis.del(redis_key_for_worker_start_time(worker))
-          @redis.hdel(HEARTBEAT_KEY, worker.to_s)
+        @redis.pipelined do |piped|
+          piped.srem(:workers, [worker.id])
+          piped.unlink(redis_key_for_worker(worker))
+          piped.unlink(redis_key_for_worker_start_time(worker))
+          piped.hdel(HEARTBEAT_KEY, worker.to_s)
 
-          block.call
+          block.call redis: piped
         end
       end
 
@@ -288,9 +290,9 @@ module Resque
       end
 
       def worker_done_working(worker, &block)
-        @redis.pipelined do
-          @redis.del(redis_key_for_worker(worker))
-          block.call
+        @redis.pipelined do |piped|
+          piped.unlink(redis_key_for_worker(worker))
+          block.call redis: piped
         end
       end
 
@@ -317,16 +319,16 @@ module Resque
         @redis.get("stat:#{stat}").to_i
       end
 
-      def increment_stat(stat, by = 1)
-        @redis.incrby("stat:#{stat}", by)
+      def increment_stat(stat, by = 1, redis: @redis)
+        redis.incrby("stat:#{stat}", by)
       end
 
       def decremet_stat(stat, by = 1)
         @redis.decrby("stat:#{stat}", by)
       end
 
-      def clear_stat(stat)
-        @redis.del("stat:#{stat}")
+      def clear_stat(stat, redis: @redis)
+        redis.unlink("stat:#{stat}")
       end
     end
   end

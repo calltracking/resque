@@ -180,9 +180,17 @@ module Resque
     WILDCARDS = ['*', '?', '{', '}', '[', ']'].freeze
 
     def queues=(queues)
-      queues = queues.empty? ? (ENV["QUEUES"] || ENV['QUEUE']).to_s.split(',') : queues
-      @queues = queues.map { |queue| queue.to_s.strip }
-      @has_dynamic_queues = WILDCARDS.any? {|char| @queues.join.include?(char) }
+      queues = (ENV["QUEUES"] || ENV['QUEUE']).to_s.split(',') if queues.empty?
+      queues = queues.map { |queue| queue.to_s.strip }
+
+      @skip_queues, @queues = queues.partition { |queue| queue.start_with?('!') }
+      @skip_queues.map! { |queue| queue[1..-1] }
+
+      # The behavior of `queues` is dependent on the value of `@has_dynamic_queues: if it's true, the method returns the result of filtering @queues with `glob_match`
+      # if it's false, the method returns @queues directly. Since `glob_match` will cause skipped queues to be filtered out, we want to make sure it's called if we have @skip_queues.any?
+      @has_dynamic_queues =
+        @skip_queues.any? || WILDCARDS.any? { |char| @queues.join.include?(char) }
+
       validate_queues
     end
 
@@ -210,7 +218,8 @@ module Resque
 
     def glob_match(list, pattern)
       list.select do |queue|
-        File.fnmatch?(pattern, queue)
+        File.fnmatch?(pattern, queue) &&
+          @skip_queues.none? { |skip_pattern| File.fnmatch?(skip_pattern, queue) }
       end.sort
     end
 
@@ -570,7 +579,7 @@ module Resque
 
     # are we paused?
     def paused?
-      @paused
+      @paused || redis.get('pause-all-workers').to_s.strip.downcase == 'true'
     end
 
     # Stop processing jobs after the current one has completed (if we're
@@ -688,9 +697,9 @@ module Resque
 
       kill_background_threads
 
-      data_store.unregister_worker(self) do
-        Stat.clear("processed:#{self}")
-        Stat.clear("failed:#{self}")
+      data_store.unregister_worker(self) do |**opts|
+        Stat.clear("processed:#{self}", **opts)
+        Stat.clear("failed:#{self}",    **opts)
       end
     rescue Exception => exception_while_unregistering
       message = exception_while_unregistering.message
@@ -717,8 +726,8 @@ module Resque
     # Called when we are done working - clears our `working_on` state
     # and tells Redis we processed a job.
     def done_working
-      data_store.worker_done_working(self) do
-        processed!
+      data_store.worker_done_working(self) do |**opts|
+        processed!(**opts)
       end
     end
 
@@ -736,9 +745,9 @@ module Resque
     end
 
     # Tell Redis we've processed a job.
-    def processed!
-      Stat << "processed"
-      Stat << "processed:#{self}"
+    def processed!(**opts)
+      Stat.incr("processed",         1, **opts)
+      Stat.incr("processed:#{self}", 1, **opts)
     end
 
     # How many failed jobs has this worker seen? Returns an int.
@@ -852,7 +861,7 @@ module Resque
       `ps -A -o pid,comm | grep "[r]uby" | grep -v "resque-web"`.split("\n").map do |line|
         real_pid = line.split(' ')[0]
         pargs_command = `pargs -a #{real_pid} 2>/dev/null | grep [r]esque | grep -v "resque-web"`
-        if pargs_command.split(':')[1] == " resque-#{Resque::Version}"
+        if pargs_command.split(':')[1] == " resque-#{Resque::VERSION}"
           real_pid
         end
       end.compact
@@ -862,7 +871,7 @@ module Resque
     # Procline is always in the format of:
     #   RESQUE_PROCLINE_PREFIXresque-VERSION: STRING
     def procline(string)
-      $0 = "#{ENV['RESQUE_PROCLINE_PREFIX']}resque-#{Resque::Version}: #{string}"
+      $0 = "#{ENV['RESQUE_PROCLINE_PREFIX']}resque-#{Resque::VERSION}: #{string}"
       log_with_severity :debug, $0
     end
 
