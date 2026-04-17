@@ -162,7 +162,7 @@ describe "Resque::Worker" do
     now = Time.now.utc.iso8601
     @worker.working_on(job)
     assert_equal now, @worker.processing['run_at']
-    assert @worker.processing['queued_since']
+    assert @worker.processing['enqueued_at']
   end
 
   it "fails uncompleted jobs with DirtyExit by default on exit" do
@@ -529,9 +529,9 @@ describe "Resque::Worker" do
         task = @worker.job
         assert_equal "SomeJob", task['payload']['class']
         assert_equal [20, "/tmp"], task['payload']['args']
-        assert task['payload']['queued_since']
+        assert task['payload']['enqueued_at']
         assert task['run_at']
-        assert_equal task['payload']['queued_since'], task['queued_since']
+        assert_equal task['payload']['enqueued_at'], task['enqueued_at']
         assert_equal 'jobs', task['queue']
       end
     end

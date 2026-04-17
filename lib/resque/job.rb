@@ -95,7 +95,7 @@ module Resque
         Resque.push(queue,
           :class => klass.to_s,
           :args => args,
-          :queued_since => Time.now.utc.iso8601
+          :enqueued_at => Time.now.utc.iso8601
         )
       end
     end
