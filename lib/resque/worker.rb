@@ -715,9 +715,11 @@ module Resque
     # Given a job, tells Redis we're working on it. Useful for seeing
     # what workers are doing and when.
     def working_on(job)
+      enqueued_at = job.payload['enqueued_at'] || Time.now.utc.iso8601
       data = encode \
         :queue   => job.queue,
         :run_at  => Time.now.utc.iso8601,
+        :enqueued_at => enqueued_at,
         :payload => job.payload
       data_store.set_worker_payload(self,data)
       state_change

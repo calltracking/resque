@@ -92,7 +92,11 @@ module Resque
         # decode(encode(args)) to ensure that args are normalized in the same manner as a non-inline job
         new(:inline, {'class' => klass, 'args' => decode(encode(args))}).perform
       else
-        Resque.push(queue, :class => klass.to_s, :args => args)
+        Resque.push(queue,
+          :class => klass.to_s,
+          :args => args,
+          :enqueued_at => Time.now.utc.iso8601
+        )
       end
     end
 
@@ -131,7 +135,13 @@ module Resque
           end
         end
       else
-        destroyed += data_store.remove_from_queue(queue, encode(:class => klass, :args => args))
+        normalized_args = decode(encode(args))
+        data_store.everything_in_queue(queue).each do |string|
+          decoded = decode(string)
+          if decoded['class'] == klass && decoded['args'] == normalized_args
+            destroyed += data_store.remove_from_queue(queue, string).to_i
+          end
+        end
       end
 
       destroyed

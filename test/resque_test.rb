@@ -48,6 +48,7 @@ describe "Resque" do
     assert_equal SomeJob, job.payload_class
     assert_equal 20, job.args[0]
     assert_equal '/tmp', job.args[1]
+    assert job.payload['enqueued_at']
   end
 
   it "can re-queue jobs" do
