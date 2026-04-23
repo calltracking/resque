@@ -7,7 +7,7 @@ describe "Resque::Worker" do
     @queue = :long_running_job
 
     def self.perform( sleep_time, rescue_time=nil )
-      Resque.redis.reconnect # get its own connection
+      Resque.redis.disconnect! # get its own connection
       Resque.redis.rpush( 'sigterm-test:start', Process.pid )
       sleep sleep_time
       Resque.redis.rpush( 'sigterm-test:result', 'Finished Normally' )
@@ -23,8 +23,8 @@ describe "Resque::Worker" do
     Resque.enqueue( LongRunningJob, 3, rescue_time )
 
     worker_pid = Kernel.fork do
-      # reconnect since we just forked
-      Resque.redis.reconnect
+      # disconnect since we just forked
+      Resque.redis.disconnect!
 
       worker = Resque::Worker.new(:long_running_job)
       worker.term_timeout = term_timeout
@@ -37,7 +37,7 @@ describe "Resque::Worker" do
     end
 
     # ensure the worker is started
-    start_status = Resque.redis.blpop( 'sigterm-test:start', 5 )
+    start_status = Resque.redis.blpop( 'sigterm-test:start', timeout: 5)
     refute_nil start_status
     child_pid = start_status[1].to_i
     assert child_pid > 0, "worker child process not created"

@@ -1,18 +1,77 @@
-## Unreleased
+## 2.6.0
 
 ### Fixed
-* Fix closing parent Redis connection in child process after fork
-* Fix the failed queues list on /queues UI when the RedisMultiQueue backend is used #1638
+
+* resque-web: Fix reflected XSS in queues endpoint (#1865)
+* resque-web: Format args in YAML (#1875)
+* Fix MiniTest undefined errors (#1879)
+* Fix failing reconnect tests (#1880)
 
 ### Added
 
-*
-*
+* Documents how to make the worker shutdown when the queue is empty (#1873)
+
+## 2.5.0
+
+### Fixed
+
+* Replace `File.exists?` with `File.exist?` (#1846)
+* Escape `Resque.redis_id` for stats page (#1834)
+* Escape resque info values (#1832)
+* Correctly show the values of hash and none type on stats tab (#1838)
+* Fix logging the worker name when starting the task (#1837)
+
+### Added
+
+* Raise an error when no available Rack server was found (#1836)
+* Move code in `Resque::Server.helpers` block into a module to make it testable (#1851)
+
+## 2.4.0
+
+### Fixed
+
+* Remove `thread_safe` arg in Redis instantiaons (#1822)
+* Updated Test Matrix for Redis 5.0 (#1824)
+* Fix redis-rb 4.8 deprecation warnings (#1827)
+* Fix redis-rb 5.0 compatibility issues (#1828)
+
+## 2.3.0
+
+### Fixed
+
+* Fix NoMethodError: undefined method 'application' for Rails:Module when Rails module is defined but not a full Rails app (#1799)
+* Fix deprecation warnings in Redis#pipelined for redis 4.6 (#1806)
+* Add Ruby syntax highlighting to remaining markdown docs (#1802)
+* Fix pagination section (#1809)
+* Fix `before_run` undefined local variable or method `runner` (#1811)
+
+### Added
+
+* Added support for pausing all workers by setting the Redis key `pause-all-workers` to string value "true" (#1803)
+
+## 2.2.1
+
+### Fixed
+
+* Escape HTML from the params to avoid XSS (#1790)
+* Remove vegas as a dependency (#1780)
+
+### Added
+
+* Add support for specifying queues that workers should ignore when using globs
+* Allow plugins to have spaces in their name (#1718)
+
+## 2.2.0
+
+### Added
+
+* Add 'Retry Failed Jobs' button to Failed page
 
 ### Fixed
 
 * Loading railtie when it did not exist #1765
-*
+* Fix closing parent Redis connection in child process after fork
+* Fix the failed queues list on /queues UI when the RedisMultiQueue backend is used #1638
 
 ## 2.1.0
 
